@@ -28,21 +28,30 @@ func checkFatal(err error) {
 
 var hostport = pflag.String("hostport", ":8080", "host:port for http")
 
+// pcid is a unique unint64 per peer connection
+// the WebRTC developers did not put a unique identifier in RTCPeerConnection
+// so the javascript side of this, just makes a u64 bit random
+// https://github.com/w3c/webrtc-pc/issues/1775  Discussion on adding a unique id
+
 const createTable = `
 CREATE TABLE IF NOT EXISTS getstats (
+	pcid INT8 NOT NULL,
 	json TEXT NOT NULL,
 	updated DATETIME DEFAULT CURRENT_TIMESTAMP
 )
 `
 
 const createIndex = `
-CREATE INDEX IF NOT EXISTS getstats_updated_idx ON getstats (updated)
+CREATE INDEX IF NOT EXISTS getstats_pcid_idx ON getstats (pcid);
+CREATE INDEX IF NOT EXISTS getstats_updated_idx ON getstats (updated);
 `
 
-const insert = `insert into getstats (json) values ($1)`
+const insert = `insert into getstats (pcid,json) values ($1,$2)`
 
-
-
+type Body struct {
+	PCID    string
+	Reports map[string]json.RawMessage
+}
 
 func main() {
 	var err error
@@ -66,17 +75,17 @@ func main() {
 			return
 		}
 
-		var objmap map[string]json.RawMessage
-		err = json.Unmarshal(body, &objmap)
+		var decodedBody Body
+		err = json.Unmarshal(body, &decodedBody)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			log.Println(err.Error())
 			return
 		}
 
-		for _, v := range objmap {
+		for _, v := range decodedBody.Reports {
 
-			n, err := db.MustExec(insert, string(v)).RowsAffected()
+			n, err := db.MustExec(insert, decodedBody.PCID, string(v)).RowsAffected()
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				log.Println(err.Error())
